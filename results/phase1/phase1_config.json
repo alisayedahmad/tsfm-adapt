@@ -1,0 +1,30 @@
+{
+  "n_buildings": 20,
+  "horizon": 24,
+  "context_len": 168,
+  "step_size": 168,
+  "n_windows": 8,
+  "season": 24,
+  "buildings": [
+    "Hog_office_Shawnna",
+    "Crow_education_Keisha",
+    "Rat_education_Adrian",
+    "Cockatoo_lodging_Albert",
+    "Hog_education_Odell",
+    "Hog_education_Darryl",
+    "Fox_education_Lesley",
+    "Robin_office_Maryann",
+    "Bull_assembly_Dorethea",
+    "Lamb_education_Larissa",
+    "Bear_public_Valorie",
+    "Robin_education_Cecilia",
+    "Lamb_office_Raymond",
+    "Eagle_office_Ryan",
+    "Robin_office_Victor",
+    "Wolf_education_Laurinda",
+    "Hog_health_Kesha",
+    "Bear_education_Babara",
+    "Bull_office_Nicolas",
+    "Lamb_education_Terina"
+  ]
+}
