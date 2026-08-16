@@ -1,0 +1,29 @@
+{
+  "plants": [
+    "plant_010",
+    "plant_011",
+    "plant_017",
+    "plant_025",
+    "plant_052",
+    "plant_053",
+    "plant_061",
+    "plant_067",
+    "plant_068",
+    "plant_078",
+    "plant_087",
+    "plant_092",
+    "plant_094",
+    "plant_095",
+    "plant_099",
+    "plant_104",
+    "plant_105",
+    "plant_114",
+    "plant_123",
+    "plant_125"
+  ],
+  "seed": 42,
+  "context_len": 168,
+  "horizon": 24,
+  "n_windows": 8,
+  "season": 24
+}
