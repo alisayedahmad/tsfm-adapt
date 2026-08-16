@@ -11,9 +11,10 @@ class ChronosForecaster:
             model_id, device_map=device, torch_dtype=dtype,
         )
 
-    def predict(self, context, horizon=24, num_samples=20):
+    def predict(self, context, horizon=24, num_samples=100):
         # context: 1D numpy array, returns 1D numpy array (median forecast)
         ctx = torch.tensor(context, dtype=torch.float32).unsqueeze(0)
+        torch.manual_seed(42)
         with torch.no_grad():
             samples = self.pipeline.predict(
                 ctx, prediction_length=horizon, num_samples=num_samples,
