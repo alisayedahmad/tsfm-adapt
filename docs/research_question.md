@@ -42,3 +42,4 @@ Dans cet ordre, un par un :
 3. objectif contrastif
 4. stress tests (missing data, bruit)
 5. 3e domaine (NREL)
+
