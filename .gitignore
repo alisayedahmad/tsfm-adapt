@@ -16,3 +16,5 @@ wandb/
 .ipynb_checkpoints/
 .DS_Store
 data/raw/solar_AL.txt.gz
+.venv-tsfm/
+.venv-moirai/
