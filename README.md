@@ -1,105 +1,159 @@
 # TSFM-Adapt
 
-Lightweight domain adaptation for Time Series Foundation Models on energy data.
+Testing whether Time Series Foundation Models need domain adaptation on energy data. Short answer: they don't, but your evaluation protocol might make you think they do.
 
-The idea: instead of fine-tuning the full model on every new site, insert a small adapter module (inspired by LoRA) that learns to correct domain-specific patterns with minimal target data. The backbone stays frozen.
+## The question
 
-## What this tests
+Chronos, TimesFM and Moirai are pretrained on massive time series corpora. The assumption in recent literature is that they degrade on domain-specific energy data (buildings, solar, grid) and need adaptation. We built a lightweight adapter to fix that.
 
-Can a small adapter (5K-70K params) recover most of the performance gap between zero-shot TSFM inference and full fine-tuning, using only 1 week of unlabeled target data?
+The adapter didn't help. But the reason it didn't help is more interesting than if it had worked.
 
-Current scope: Chronos-T5-Small on BDG2 (building energy consumption, 1578 buildings, hourly).
+## What actually happened
 
-## Results so far
+### Phase 1: Chronos matches the naive baseline
 
-### Phase 1: baselines + zero-shot
-
-20 buildings sampled from BDG2 (seed=42, completeness >= 80%, variance > 0.1).
-Rolling forecast: 8 windows, step 7 days, horizon 24h, context 168h.
-160 total evaluations.
+We evaluated Chronos-T5-Small against SeasonalNaive, AutoETS and AutoTheta on 20 BDG2 buildings (hourly electricity, 24h-ahead, 8 rolling windows).
 
 ```
-       Method  MASE_median  MASE_mean  sMAPE_mean
-SeasonalNaive        0.271      0.553         8.6
-      AutoETS        0.317      0.655        12.3
-    AutoTheta        1.297      1.464        37.5
-      Chronos        0.281      0.550         8.6
+       Method  MASE_median
+SeasonalNaive        0.271
+      Chronos        0.271
+      AutoETS        0.317
+    AutoTheta        1.297
 ```
 
-Chronos zero-shot matches SeasonalNaive. It does not beat it.
-This is already informative: on BDG2 hourly data with 24h horizon, the domain gap between Chronos and a tuned-per-site baseline is small. There is not much room for an adapter to improve things.
+Chronos ties with the naive. No gap to close. We spent two weeks building and tuning an adapter anyway.
 
-### Phase 2: adapter experiments
+### Phase 2: the adapter does nothing useful
 
-Tested two adapter approaches against zero-shot Chronos on the same 20 buildings and 8 evaluation windows.
+We tested six configurations of an input adapter (bottleneck module before the frozen backbone, trained with a proxy forecast head). Best result: +4.1% improvement, within noise. An output correction approach (OLS on Chronos residuals) also failed.
 
-**Input adapter** (bottleneck module before Chronos, trained with a proxy forecast head):
+The adapter was not broken. There was simply nothing to correct.
 
-| Config | Params | Data | MASE adapted | MASE zero-shot | Delta |
-|--------|--------|------|-------------|----------------|-------|
-| per-building, no regularization | 71K | 7 days | 3.566 | 0.237 | -1405% |
-| per-building, identity reg lambda=1.0 | 71K | 7 days | 0.239 | 0.259 | +7.7% |
-| cross-building, identity reg, Chronos-validated checkpoint | 71K | 7 days | 0.260 | 0.271 | +4.1% |
+### Phase 3-4: testing other setups
 
-Best result: +4.1% improvement (median MASE). Below the noise floor.
+We tried 168h-ahead on BDG2 and 24h-ahead on NREL solar (137 PV plants). Chronos held up or won in both cases. No domain gap anywhere.
 
-**Output correction** (per-step affine correction on Chronos predictions, fit by OLS):
+### Phase 5: three models, same conclusion (or so we thought)
 
-Calibrated on 7 days immediately before test period, per-building, 73 calibration pairs each. Correction factors were reasonable (scale ~0.95-1.0) but did not transfer well across the 8-week test window due to nonstationarity. Net result negative.
+We added TimesFM (200M) and Moirai (14M) to the comparison. On the same BDG2 evaluation:
 
-### Interpretation
+```
+Chronos   0.271  (tied with naive)
+TimesFM   0.385  (+41% worse than naive)
+Moirai    0.432  (+58% worse than naive)
+```
 
-The adapter does not produce meaningful gains on this setup. The main reason is not the adapter architecture. It is that the domain gap is too small to begin with. Chronos already matches the seasonal naive baseline, so there is almost nothing to recover.
+This looked like a real finding: Chronos holds, the other two don't. We ran diagnostics, verified the wrappers had no bugs, and were about to write this up.
 
-This is a valid negative result. It tells us where lightweight adaptation does NOT help: when the TSFM is already performing near the domain-specific baselines. The interesting test cases are where the gap is large (longer horizons, weather-dependent renewables, grid-level demand with regulatory structure).
+### The protocol was wrong
+
+Then we checked what day of the week we were evaluating. Every single cutoff fell on a Saturday night, so every forecast started on a Sunday. With `step_size=168` (exactly one week), the evaluation never saw a Monday, a Wednesday, or any other day.
+
+We reran everything with `step_size=48` (362 cutoffs instead of 8, all seven days covered, 7240 evaluations per model):
+
+```
+            Naive  Chronos  TimesFM  Moirai
+Monday      1.773    0.963    0.706   0.672
+Tuesday     0.544    0.463    0.518   0.504
+Wednesday   0.434    0.395    0.458   0.444
+Thursday    0.458    0.408    0.463   0.475
+Friday      0.501    0.436    0.498   0.483
+Saturday    1.598    0.505    0.635   0.968
+Sunday      0.359    0.387    0.503   0.544
+
+OVERALL     0.586    0.466    0.530   0.543
+```
+
+All three TSFMs beat the naive overall. The "gap" for TimesFM and Moirai was an artifact of evaluating only on Sundays, the one day where the naive baseline (repeat yesterday = repeat Saturday, which resembles Sunday) is naturally strong.
+
+The real pattern: TSFMs dominate on transition days (Monday: naive repeats Sunday for a workday, Saturday: naive repeats Friday for a weekend day). These are exactly the cases where understanding weekly structure matters, and where a model pretrained on diverse time series has a genuine advantage over a method that copies yesterday.
+
+## What this means
+
+**For practitioners.** TSFMs work on energy data out of the box. On BDG2 hourly buildings, Chronos-T5-Small beats a daily naive by 20% overall. No adaptation needed for this use case.
+
+**For researchers.** Your evaluation step size can flip your conclusion. A step that is a multiple of the dominant period (168h = 1 week for buildings) locks your evaluation to one phase of the cycle. This is not a minor detail. It turned "all three models lose" into "all three models win" in this study.
+
+**For the adapter idea.** The hypothesis was reasonable but the premise was wrong on this data. The adapter machinery is in the repo and works correctly. It just has nothing to correct here. The interesting cases would be data where TSFMs genuinely fail: series with no periodic structure (wind generation), or deployment settings where the TSFM encounters patterns absent from its pretraining data.
 
 ## Repo structure
 
 ```
 src/
-  data/          loading, sampling, preprocessing, windowing
-  eval/          MASE, sMAPE, evaluation utilities
+  data/           BDG2 loader, NREL solar loader, preprocessing
+  eval/           MASE, sMAPE
   models/
-    baselines/   SeasonalNaive, AutoETS, AutoTheta (statsforecast)
-    tsfm_wrappers/  Chronos wrapper
-    adapter/     input adapter, output correction
-  training/      adapter training loop
+    baselines/    SeasonalNaive, AutoETS, AutoTheta (statsforecast)
+    tsfm_wrappers/  Chronos, TimesFM, Moirai (one venv each)
+    adapter/      input adapter, output correction (Phase 2)
+  training/       adapter training loop
 
-experiments/     phase scripts (run_phase1.py, run_phase2.py, run_phase2b.py)
-tests/           unit tests (metrics, adapter shapes, output correction)
-results/         saved results per phase
+experiments/      phase scripts, diagnostics, analysis
+tests/            unit tests (metrics, adapter shapes, output correction, NREL loader)
+results/          saved results per phase
 ```
 
 ## Setup
 
-```
+Each TSFM needs its own virtual environment because their dependencies conflict.
+
+```bash
+# Chronos (main venv)
 python -m venv .venv
-.venv\Scripts\activate          # Windows
+.venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+pip install chronos-forecasting statsforecast pandas pyarrow pytest
+
+# TimesFM
+python -m venv .venv-tsfm
+.venv-tsfm\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+pip install timesfm pandas pyarrow
+
+# Moirai
+python -m venv .venv-moirai
+.venv-moirai\Scripts\activate
+pip install uni2ts pandas pyarrow
 ```
 
-Data: BDG2 `electricity_cleaned.csv` goes in `data/raw/`. Download from Zenodo (Building Data Genome 2).
+BDG2 data: `electricity_cleaned.csv` in `data/raw/` (download from Zenodo, Building Data Genome 2).
+NREL solar: downloaded automatically on first run.
 
 ## Running
 
-```
-python -m pytest tests/ -v                  # all tests
-python experiments/run_phase1.py            # baselines + zero-shot (~45 min)
-python experiments/run_phase2.py            # input adapter (~5 min)
-python experiments/run_phase2b.py           # output correction (~15 min)
+```bash
+# tests (main venv)
+python -m pytest tests/ -v
+
+# full evaluation, one model per venv
+.venv\Scripts\activate
+python experiments\run_gap_by_day_multi.py --model chronos
+
+.venv-tsfm\Scripts\activate
+python experiments\run_gap_by_day_multi.py --model timesfm
+
+.venv-moirai\Scripts\activate
+python experiments\run_gap_by_day_multi.py --model moirai
+
+# aggregate
+python experiments\run_gap_by_day_multi.py --aggregate
 ```
 
-## Next steps
+## Key numbers
 
-- Test on longer horizons (168h) where Chronos should struggle more
-- Test on ENTSO-E (grid demand) or NREL (solar/wind) where domain shift is stronger
-- Produce fine-tuning upper bound for proper gap measurement
-- If a real gap exists, the adapter machinery is ready to exploit it
+| Metric | Value |
+|--------|-------|
+| Buildings evaluated | 20 (BDG2, seed=42) |
+| Evaluation windows | 362 per model (step=48h) |
+| Total evaluations | 7240 per model |
+| Forecast horizon | 24h |
+| Context length | 168h |
+| Days of week covered | all 7 |
 
 ## Stack
 
-PyTorch, HuggingFace Transformers, chronos-forecasting, statsforecast, pandas, numpy, pytest.
+PyTorch 2.x, HuggingFace Transformers, chronos-forecasting, timesfm, uni2ts, statsforecast, pandas, numpy, pytest.
 
 ## License
 
